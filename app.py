@@ -1,45 +1,52 @@
-from flask import Flask, request, jsonify
 import os
 import subprocess
-import tempfile
+from flask import Flask, request, jsonify
 
 app = Flask(__name__)
 
 @app.route('/convert', methods=['POST'])
 def convert_pdf_to_html():
-    if not request.files:
-        return jsonify({'error': 'No PDF file uploaded'}), 400
+    if 'file' not in request.files:
+        return jsonify({"error": "No file provided"}), 400
+    
+    file = request.files['file']
+    
+    if file.filename == '':
+        return jsonify({"error": "No selected file"}), 400
+    
+    if file:
+        # Save the uploaded file
+        input_file_path = '/tmp/input.pdf'
+        output_file_path = 'tmp/output.html'
+        file.save(input_file_path)
 
-    pdf_files = request.files.getlist('pdf_files')  # Access multiple files
+        # Convert PDF to HTML
+        try:
+            result = subprocess.run([
+                'pdf2htmlEX', 
+                input_file_path,
+                output_file_path
+            ], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
-    if not pdf_files:
-        return jsonify({'error': 'No PDF files uploaded'}), 400
+            if result.returncode != 0:
+                stderr_output = result.stderr.decode('utf-8', errors='replace')
+                return jsonify({"error": "Conversion failed", "stderr": stderr_output}), 500
 
-    converted_html = []  # Store converted HTML for each PDF
+            # Read the output HTML file
+            with open(output_file_path, 'r', encoding='utf-8') as f:
+                html_content = f.read()
 
-    try:
-        for pdf_file in pdf_files:
-            # Extract filename without extension
-            filename, _ = os.path.splitext(pdf_file.filename)
+            return html_content, 200
 
-            with tempfile.NamedTemporaryFile(delete=False) as temp_pdf:
-                pdf_file.save(temp_pdf.name)
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
 
-                # Create unique output filename with extension
-                output_filename = f'{filename}.html'  # Append .html extension
-
-                command = ['pdf2htmlEX', temp_pdf.name, output_filename]  # Output to a file
-                process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                output, error = process.communicate()
-
-                if process.returncode != 0:
-                    return jsonify({'error': f'PDF conversion failed: {error.decode()}'}), 500
-
-                converted_html.append(output_filename)  # Store output filename
-
-        return jsonify({'message': 'PDF conversion successful', 'html': converted_html}), 200
-    except Exception as e:
-        return jsonify({'error': f'An error occurred: {str(e)}'}), 500
+        finally:
+            # Clean up files
+            if os.path.exists(input_file_path):
+                os.remove(input_file_path)
+            if os.path.exists(output_file_path):
+                os.remove(output_file_path)
 
 if __name__ == '__main__':
-    app.run(debug=True)
+    app.run(host='0.0.0.0', port=5000, debug=False)
